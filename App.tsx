@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { PRESETS } from './constants';
 import { AppState, PhaseType, Preset } from './types';
@@ -45,8 +44,8 @@ const App: React.FC = () => {
   const [accuracy, setAccuracy] = useState(0);
 
   // Refs for loop
-  const requestRef = useRef<number>();
-  const previousTimeRef = useRef<number>();
+  const requestRef = useRef<number | undefined>(undefined);
+  const previousTimeRef = useRef<number | undefined>(undefined);
   
   // Initialize based on preset
   const initPreset = useCallback((preset: Preset) => {
