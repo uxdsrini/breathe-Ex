@@ -1,4 +1,5 @@
-import { Preset, PhaseType } from './types';
+
+import { Preset, PhaseType, Coupon } from './types';
 
 export const PRESETS: Preset[] = [
   {
@@ -70,6 +71,25 @@ export const PRESETS: Preset[] = [
     ]
   },
   {
+    id: 'mindful-movement',
+    name: 'Mindful Movement',
+    description: 'AI-guided posture analysis using your camera.',
+    type: 'timer',
+    defaultDuration: 5,
+    isPremium: true,
+    benefits: [
+      "Corrects posture in real-time using AI.",
+      "Prevents back pain and injury.",
+      "Increases body awareness and alignment."
+    ],
+    technique: [
+      "Ensure your device camera is enabled.",
+      "Stand back so your full upper body is visible.",
+      "Follow the text guidance on screen for alignment.",
+      "Hold poses as instructed."
+    ]
+  },
+  {
     id: 'zazen',
     name: 'Zazen (Just Sitting)',
     description: 'Open awareness meditation with a simple timer.',
@@ -105,4 +125,47 @@ export const PRESETS: Preset[] = [
       "Take a short 5-minute break before starting the next cycle."
     ]
   },
+];
+
+export const AVAILABLE_COUPONS: Coupon[] = [
+  {
+    id: 'amazon-5',
+    provider: 'Amazon',
+    description: 'Gift Card',
+    valueDisplay: '$5',
+    cost: 500,
+    logoColor: 'bg-amber-500'
+  },
+  {
+    id: 'amazon-10',
+    provider: 'Amazon',
+    description: 'Gift Card',
+    valueDisplay: '$10',
+    cost: 900,
+    logoColor: 'bg-amber-500'
+  },
+  {
+    id: 'flipkart-500',
+    provider: 'Flipkart',
+    description: 'Voucher',
+    valueDisplay: '₹500',
+    cost: 800,
+    logoColor: 'bg-blue-500'
+  },
+  {
+    id: 'calm-month',
+    provider: 'Wellness Store',
+    description: 'Yoga Mat Discount',
+    valueDisplay: '20% OFF',
+    cost: 250,
+    logoColor: 'bg-teal-600'
+  },
+  {
+    id: 'spotify-trial',
+    provider: 'Spotify',
+    description: 'Premium Trial',
+    valueDisplay: '1 Month',
+    cost: 300,
+    logoColor: 'bg-green-500'
+  }
 ];
