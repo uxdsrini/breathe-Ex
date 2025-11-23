@@ -144,8 +144,8 @@ const LandingPage: React.FC<LandingPageProps> = ({ onConnect }) => {
                 <div className="bg-teal-900 p-8 rounded-3xl border border-teal-800 shadow-xl text-white relative overflow-hidden">
                     <div className="absolute top-0 right-0 bg-amber-400 text-amber-900 text-xs font-bold px-3 py-1 rounded-bl-xl">POPULAR</div>
                     <div className="text-lg font-medium text-teal-200 mb-2">ZenFlow Pro</div>
-                    <div className="text-4xl font-bold text-white mb-1">$9.99<span className="text-lg font-normal text-teal-300">/mo</span></div>
-                    <p className="text-sm text-teal-300 mb-6">or $79.99/year (Save 33%)</p>
+                    <div className="text-4xl font-bold text-white mb-1">₹299<span className="text-lg font-normal text-teal-300">/mo</span></div>
+                    <p className="text-sm text-teal-300 mb-6">or ₹2499/year (Save 30%)</p>
                     
                     <ul className="space-y-4 text-left mb-8">
                         <li className="flex items-center gap-3 text-teal-50">

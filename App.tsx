@@ -1,5 +1,6 @@
+
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { PRESETS } from './constants';
+import { PRESETS, WARMUP_PRESET } from './constants';
 import { AppState, PhaseType, Preset } from './types';
 import PresetSelector from './components/PresetSelector';
 import ZenGuide from './components/ZenGuide';
@@ -23,6 +24,12 @@ const formatTime = (seconds: number) => {
 const App: React.FC = () => {
   const [activePreset, setActivePreset] = useState<Preset>(PRESETS[0]);
   const [appState, setAppState] = useState<AppState>(AppState.Idle);
+  
+  // Warmup Logic
+  const [isWarmupEnabled, setIsWarmupEnabled] = useState(false);
+  const [sessionPhase, setSessionPhase] = useState<'warmup' | 'main'>('main');
+  const mainPresetRef = useRef<Preset>(PRESETS[0]); // Stores the user selected preset during warmup
+
   const [isInfoOpen, setIsInfoOpen] = useState(false);
   const [isAuthOpen, setIsAuthOpen] = useState(false);
   const [isSubModalOpen, setIsSubModalOpen] = useState(false);
@@ -50,10 +57,12 @@ const App: React.FC = () => {
   // Initialize based on preset
   const initPreset = useCallback((preset: Preset) => {
     setActivePreset(preset);
+    mainPresetRef.current = preset; // Keep track of selection
     setAppState(AppState.Idle);
     setTotalSessionTime(0);
     setShowCompletion(false);
     setAccuracy(0);
+    setSessionPhase('main');
     
     if (preset.id === 'mindful-movement') {
        if (isPremium) {
@@ -79,6 +88,7 @@ const App: React.FC = () => {
     setShowCompletion(true);
     triggerHaptic(HapticPatterns.Success);
     
+    // Don't save points for just the warmup if they somehow triggered completion early
     if (currentUser && finalDuration > 10) {
       const points = calculatePoints(finalDuration);
       setLastPointsEarned(points);
@@ -95,34 +105,64 @@ const App: React.FC = () => {
 
       setTotalSessionTime(prev => {
           const newTotal = prev + deltaTime;
+          
+          // CHECK WARMUP COMPLETION (60s)
+          if (sessionPhase === 'warmup' && newTotal >= 60) {
+            return newTotal; 
+          }
           return newTotal;
       });
 
+      // Handle Timer Logic
       if (activePreset.type === 'breathing' && activePreset.phases) {
-        setPhaseTimeLeft(prev => {
-          const newTime = prev - deltaTime;
-          return newTime;
-        });
+        setPhaseTimeLeft(prev => prev - deltaTime);
       } else if (activePreset.type === 'timer') {
         setTimerDuration(prev => {
           const newTime = prev - deltaTime;
-          if (newTime <= 0) {
-            return 0;
-          }
+          if (newTime <= 0) return 0;
           return newTime;
         });
       }
     }
     previousTimeRef.current = time;
     requestRef.current = requestAnimationFrame(animate);
-  }, [appState, activePreset]);
+  }, [appState, activePreset, sessionPhase]);
+
+  // Check for Warmup Completion
+  useEffect(() => {
+    if (sessionPhase === 'warmup' && totalSessionTime >= 60) {
+       // --- TRANSITION TO MAIN SESSION ---
+       const mainPreset = mainPresetRef.current;
+       
+       triggerHaptic(HapticPatterns.Success); // Slight buzz to indicate transition
+       
+       // Reset for Main Preset
+       setActivePreset(mainPreset);
+       setSessionPhase('main');
+       setTotalSessionTime(0); // Reset timer for the main session
+       
+       // Setup state for new preset type
+       if (mainPreset.type === 'breathing' && mainPreset.phases) {
+         setCurrentPhaseIndex(0);
+         setPhaseTimeLeft(mainPreset.phases[0].duration);
+       } else if (mainPreset.type === 'timer') {
+         setTimerDuration((mainPreset.defaultDuration || 10) * 60);
+       }
+
+       // Ensure Camera is correct if moving to movement
+       if (mainPreset.id === 'mindful-movement' && isPremium) {
+         setIsCameraMode(true);
+       }
+    }
+  }, [totalSessionTime, sessionPhase, isPremium]);
+
 
   // Watch for Timer Completion in loop
   useEffect(() => {
-      if (activePreset.type === 'timer' && timerDuration <= 0 && appState === AppState.Running) {
+      if (activePreset.type === 'timer' && timerDuration <= 0 && appState === AppState.Running && sessionPhase === 'main') {
           handleComplete((activePreset.defaultDuration || 10) * 60);
       }
-  }, [timerDuration, appState, activePreset, handleComplete]);
+  }, [timerDuration, appState, activePreset, handleComplete, sessionPhase]);
 
   // Effect to handle phase switching for breathing
   useEffect(() => {
@@ -156,12 +196,30 @@ const App: React.FC = () => {
     }
 
     triggerHaptic(HapticPatterns.Soft);
+
     if (appState === AppState.Running) {
       setAppState(AppState.Paused);
     } else if (appState === AppState.Completed) {
         reset();
     } else {
-      setAppState(AppState.Running);
+      // STARTING
+      if (appState === AppState.Idle && isWarmupEnabled && sessionPhase === 'main') {
+         // Start Warmup First
+         mainPresetRef.current = activePreset; // Store original
+         setActivePreset(WARMUP_PRESET);
+         setSessionPhase('warmup');
+         
+         // Setup breathing for warmup
+         setCurrentPhaseIndex(0);
+         if (WARMUP_PRESET.phases) {
+             setPhaseTimeLeft(WARMUP_PRESET.phases[0].duration);
+         }
+         setTotalSessionTime(0);
+         setAppState(AppState.Running);
+      } else {
+         // Start Normally or Resume
+         setAppState(AppState.Running);
+      }
     }
   };
 
@@ -170,7 +228,8 @@ const App: React.FC = () => {
   };
 
   const reset = () => {
-    initPreset(activePreset);
+    // If we were in warmup, reset to the user's selected preset, not the warmup preset
+    initPreset(mainPresetRef.current);
   };
 
   const handleCameraToggle = () => {
@@ -196,45 +255,53 @@ const App: React.FC = () => {
     if (!activePreset.phases) return 1;
     
     const phase = activePreset.phases[currentPhaseIndex];
-    const progress = 1 - (phaseTimeLeft / phase.duration); // 0 to 1
+    if (!phase || phase.duration === 0) return 1;
+
+    // Linear progress 0 -> 1
+    const progress = 1 - (phaseTimeLeft / phase.duration);
+    
+    // Natural breathing easing (Sine Ease In Out)
+    const ease = (t: number) => -(Math.cos(Math.PI * t) - 1) / 2;
+    // Clamp progress to 0-1 for safety before easing
+    const easedProgress = ease(Math.max(0, Math.min(1, progress)));
     
     let targetScale = 1;
+    const MAX_SCALE = 1.8;
+    const scaleRange = MAX_SCALE - 1;
+
+    // Determine if we are holding after an Inhale (Full) or Exhale (Empty)
     const prevPhaseIndex = currentPhaseIndex === 0 ? activePreset.phases.length - 1 : currentPhaseIndex - 1;
     const prevPhase = activePreset.phases[prevPhaseIndex];
-    const isPrevInhale = prevPhase.type === PhaseType.Inhale;
-    const isPrevHoldAtTop = prevPhase.type === PhaseType.Hold && (
-       (currentPhaseIndex > 1 ? activePreset.phases[currentPhaseIndex - 2].type === PhaseType.Inhale : false)
-    );
+    const isFull = prevPhase.type === PhaseType.Inhale; 
     
     if (phase.type === PhaseType.Inhale) {
-        targetScale = 1 + (progress * 0.8); 
+        targetScale = 1 + (easedProgress * scaleRange); 
     } else if (phase.type === PhaseType.Exhale) {
-        targetScale = 1.8 - (progress * 0.8); 
+        targetScale = MAX_SCALE - (easedProgress * scaleRange); 
     } else if (phase.type === PhaseType.Hold) {
-        if (isPrevInhale || isPrevHoldAtTop) {
-             targetScale = 1.8;
-        } else {
-            targetScale = 1;
-        }
+        targetScale = isFull ? MAX_SCALE : 1;
     }
+    
     return targetScale;
   };
 
   const isBreathing = activePreset.type === 'breathing';
   const isRunning = appState === AppState.Running;
-  const currentScale = (isRunning && isBreathing) ? calculateBreathingScale() : 1;
+  const isSessionActive = appState === AppState.Running || appState === AppState.Paused;
+
+  const currentScale = (isSessionActive && isBreathing) ? calculateBreathingScale() : 1;
   
-  const currentLabel = (isRunning && isBreathing) 
+  const currentLabel = (isSessionActive && isBreathing) 
       ? activePreset.phases?.[currentPhaseIndex].label || 'Ready'
       : (isBreathing ? 'Ready' : 'Focus');
 
-  const currentPhaseDuration = (isRunning && isBreathing) 
+  const currentPhaseDuration = (isSessionActive && isBreathing) 
       ? activePreset.phases?.[currentPhaseIndex]?.duration 
       : undefined;
 
   const currentMainText = (activePreset.type === 'timer')
       ? formatTime(Math.ceil(timerDuration))
-      : (isRunning ? Math.ceil(phaseTimeLeft) : 'Start');
+      : (isSessionActive ? Math.ceil(phaseTimeLeft) : 'Start');
 
   const subIcon = !isRunning && (
     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-8 h-8 text-white opacity-80 mt-2">
@@ -263,15 +330,19 @@ const App: React.FC = () => {
     <div className="relative h-[100dvh] w-full flex flex-col bg-stone-50 selection:bg-teal-100 overflow-hidden animate-in fade-in duration-700">
       
       {/* Header */}
-      <header className={`flex-none w-full p-6 md:p-8 flex justify-between items-center z-20 transition-opacity duration-700 ${appState === AppState.Running ? 'opacity-30 hover:opacity-100' : 'opacity-100'}`}>
+      <header className={`flex-none w-full p-6 md:p-8 flex justify-between items-center z-20 transition-opacity duration-700 ${appState === AppState.Running ? 'opacity-80 hover:opacity-100' : 'opacity-100'}`}>
         <h1 className="text-xl md:text-2xl font-semibold tracking-tighter text-teal-900 flex items-center gap-2">
           <span className="w-3 h-3 rounded-full bg-teal-600 block"></span>
           ZenFlow
         </h1>
         
         <div className="flex items-center gap-4">
-           <div className="hidden md:block text-sm text-stone-400 font-medium">
-              {appState === AppState.Running ? 'Focus Mode' : 'Ready'}
+           {/* Status Indicator */}
+           <div className="hidden md:block text-sm text-stone-400 font-medium transition-all">
+              {appState === AppState.Running 
+                ? (sessionPhase === 'warmup' ? 'Warmup Phase (1m)' : 'Focus Mode')
+                : (appState === AppState.Paused ? 'Paused' : 'Ready')
+              }
            </div>
            
            <button 
@@ -305,13 +376,14 @@ const App: React.FC = () => {
       </header>
 
       {/* Main Content Area with Scroll Support */}
-      <main className="flex-grow flex flex-col items-center w-full relative z-10 pb-40 pt-4 overflow-y-auto scrollbar-hide">
+      {/* Updated container logic: min-h-full allows centering when small, scrolling when tall. Padding ensures bottom visibility. */}
+      <main className="flex-grow w-full relative z-10 overflow-y-auto scrollbar-hide">
         
-        <div className="w-full flex flex-col items-center my-auto">
+        <div className="min-h-full w-full flex flex-col items-center justify-center py-12 pb-48 px-4">
         
             {/* Completion Overlay */}
             {showCompletion && (
-                <div className="absolute inset-0 z-30 flex items-center justify-center bg-stone-50/90 backdrop-blur-sm animate-in zoom-in-95 duration-500 h-[100dvh]">
+                <div className="absolute inset-0 z-30 flex items-center justify-center bg-stone-50/90 backdrop-blur-sm animate-in zoom-in-95 duration-500 h-full">
                     <div className="text-center px-6">
                         <div className="w-20 h-20 bg-teal-100 rounded-full flex items-center justify-center mx-auto mb-6 animate-bounce text-teal-600">
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-10 h-10">
@@ -342,7 +414,7 @@ const App: React.FC = () => {
             )}
 
             {/* Camera Coach Mode (GATED) */}
-            {isCameraMode && isPremium && appState === AppState.Running ? (
+            {isCameraMode && isPremium && appState === AppState.Running && sessionPhase === 'main' ? (
                 <div className="w-full h-full absolute inset-0 flex items-center justify-center bg-stone-900 z-20">
                     <CameraCoach 
                     isActive={true} 
@@ -361,20 +433,29 @@ const App: React.FC = () => {
             ) : (
                 /* Standard Mode (Breathing Circle) */
                 <div className={`flex-none relative mb-6 md:mb-12 transition-all duration-500 ${showCompletion ? 'opacity-0 scale-90' : 'opacity-100 scale-100'}`}>
+                {/* Warmup Label Overlay */}
+                {sessionPhase === 'warmup' && isSessionActive && (
+                  <div className="absolute -top-12 left-0 right-0 text-center animate-in fade-in slide-in-from-bottom-2">
+                    <span className="bg-teal-100 text-teal-800 text-xs font-bold px-3 py-1 rounded-full tracking-wide uppercase shadow-sm">
+                      Warmup Phase • {60 - Math.floor(totalSessionTime)}s
+                    </span>
+                  </div>
+                )}
+                
                 <BreathingCircle 
                     isActive={appState === AppState.Running}
                     mode={activePreset.type}
                     scale={currentScale}
                     label={currentLabel}
                     text={currentMainText}
-                    subText={!isRunning && activePreset.type === 'breathing' ? subIcon : null}
+                    subText={appState === AppState.Paused && activePreset.type === 'breathing' ? subIcon : null}
                     phaseDuration={currentPhaseDuration}
                 />
                 </div>
             )}
 
             {/* Dynamic Action Area - Controls using CSS Grid for overlap without absolute positioning issues */}
-            {(!isCameraMode || !isPremium) && (
+            {(!isCameraMode || !isPremium || sessionPhase === 'warmup') && (
             <div className={`w-full max-w-md px-6 grid grid-cols-1 grid-rows-1 min-h-[200px] ${showCompletion ? 'opacity-0' : ''}`}>
                 
                 {/* IDLE STATE CONTENT */}
@@ -409,20 +490,29 @@ const App: React.FC = () => {
                     </div>
                 )}
 
-                {/* Camera Toggle */}
-                {activePreset.id !== 'mindful-movement' && (
-                    <div className="mb-4 flex items-center gap-2">
-                        <button 
-                        onClick={handleCameraToggle}
-                        className={`relative text-xs font-bold uppercase tracking-wider px-3 py-1 rounded-full border transition-all flex items-center gap-2 ${isCameraMode ? 'bg-teal-100 text-teal-700 border-teal-200' : 'bg-white text-stone-400 border-stone-200 hover:border-stone-300'}`}
-                        >
-                        {isCameraMode ? 'Camera On' : 'Camera Off'}
-                        {!isPremium && (
-                            <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" title="Premium Feature"></span>
-                        )}
-                        </button>
-                    </div>
-                )}
+                {/* Toggles Row */}
+                <div className="flex items-center gap-3 mb-6">
+                  {/* Camera Toggle */}
+                  {activePreset.id !== 'mindful-movement' && (
+                      <button 
+                      onClick={handleCameraToggle}
+                      className={`relative text-xs font-bold uppercase tracking-wider px-3 py-1.5 rounded-full border transition-all flex items-center gap-2 ${isCameraMode ? 'bg-teal-100 text-teal-700 border-teal-200' : 'bg-white text-stone-400 border-stone-200 hover:border-stone-300'}`}
+                      >
+                      {isCameraMode ? 'Camera On' : 'Camera Off'}
+                      {!isPremium && (
+                          <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" title="Premium Feature"></span>
+                      )}
+                      </button>
+                  )}
+
+                  {/* Warmup Toggle */}
+                  <button 
+                    onClick={() => setIsWarmupEnabled(!isWarmupEnabled)}
+                    className={`relative text-xs font-bold uppercase tracking-wider px-3 py-1.5 rounded-full border transition-all flex items-center gap-2 ${isWarmupEnabled ? 'bg-teal-100 text-teal-700 border-teal-200' : 'bg-white text-stone-400 border-stone-200 hover:border-stone-300'}`}
+                  >
+                    {isWarmupEnabled ? 'Warmup On' : 'Warmup Off'}
+                  </button>
+                </div>
                 
                 {activePreset.id === 'mindful-movement' && !isPremium && (
                     <div className="mb-4 text-xs text-amber-600 bg-amber-50 px-3 py-1 rounded-full">
@@ -480,14 +570,19 @@ const App: React.FC = () => {
                         )}
                     </button>
                 </div>
-                {!isPremium && (
+                {!isPremium && !isWarmupEnabled && (
                     <div className="absolute -bottom-8 w-full text-center">
                     <button onClick={() => setIsSubModalOpen(true)} className="text-xs text-stone-400 hover:text-teal-600">
                         Upgrade for AI Guidance
                     </button>
                     </div>
                 )}
-                <p className="mt-4 text-stone-400 text-sm font-medium animate-pulse">{appState === AppState.Paused ? 'Paused' : 'Focus...'}</p>
+                
+                <p className="mt-4 text-stone-400 text-sm font-medium animate-pulse">
+                   {appState === AppState.Paused 
+                      ? 'Paused' 
+                      : (sessionPhase === 'warmup' ? 'Warming up...' : 'Focus...')}
+                </p>
                 </div>
 
             </div>
@@ -496,7 +591,7 @@ const App: React.FC = () => {
       </main>
 
       {/* Preset Menu */}
-      <div className={`fixed bottom-0 w-full bg-gradient-to-t from-stone-50 via-stone-50 to-transparent pt-8 pb-2 z-20 ${showCompletion || (isCameraMode && appState === AppState.Running) ? 'pointer-events-none opacity-0' : ''}`}>
+      <div className={`fixed bottom-0 w-full bg-gradient-to-t from-stone-50 via-stone-50 to-transparent pt-8 pb-2 z-20 ${showCompletion || (isCameraMode && appState === AppState.Running && sessionPhase === 'main') ? 'pointer-events-none opacity-0' : ''}`}>
         <PresetSelector 
           currentPresetId={activePreset.id} 
           onSelect={initPreset} 

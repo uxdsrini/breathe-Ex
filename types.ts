@@ -83,3 +83,15 @@ export interface Redemption {
 }
 
 export type UpgradeTrigger = 'camera' | 'rewards' | 'generic';
+
+// --- PAYMENT TYPES ---
+export interface PaymentTransaction {
+  id: string;
+  userId: string;
+  amount: number;
+  currency: string;
+  status: 'success' | 'failed';
+  method: 'upi' | 'card' | 'netbanking';
+  planId: string;
+  timestamp: any;
+}

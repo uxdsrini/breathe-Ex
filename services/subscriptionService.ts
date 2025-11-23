@@ -1,33 +1,46 @@
 
 import { db } from '../firebase';
-import { doc, updateDoc, serverTimestamp, Timestamp } from 'firebase/firestore';
+import { doc, updateDoc, collection, addDoc, serverTimestamp, Timestamp } from 'firebase/firestore';
 import { UserSubscription, PlanInterval } from '../types';
 
 export const PLANS = {
   MONTHLY: {
     id: 'pro_monthly',
     name: 'ZenFlow Pro Monthly',
-    price: 9.99,
+    price: 299,
+    currency: 'INR',
+    symbol: '₹',
     interval: 'month' as PlanInterval,
   },
   YEARLY: {
     id: 'pro_yearly',
     name: 'ZenFlow Pro Yearly',
-    price: 79.99,
+    price: 2499,
+    currency: 'INR',
+    symbol: '₹',
     interval: 'year' as PlanInterval,
-    savings: '33%'
+    savings: '30%'
   }
 };
 
-/**
- * Mocks a payment gateway process (e.g., Stripe)
- * In a real app, this would call a Cloud Function which communicates with Stripe/RevenueCat
- */
+export const recordPayment = async (userId: string, amount: number, method: 'upi' | 'card', planId: string) => {
+  try {
+    await addDoc(collection(db, 'payments'), {
+      userId,
+      amount,
+      currency: 'INR',
+      status: 'success',
+      method,
+      planId,
+      timestamp: serverTimestamp()
+    });
+  } catch (e) {
+    console.error("Failed to log payment", e);
+  }
+};
+
 export const upgradeSubscription = async (userId: string, planId: string): Promise<boolean> => {
   if (!userId) return false;
-
-  // Simulate API network latency
-  await new Promise(resolve => setTimeout(resolve, 1500));
 
   // Calculate expiry date (1 month or 1 year from now)
   const now = new Date();
@@ -53,7 +66,7 @@ export const upgradeSubscription = async (userId: string, planId: string): Promi
     });
     return true;
   } catch (error) {
-    console.error("Subscription failed:", error);
+    console.error("Subscription upgrade failed:", error);
     return false;
   }
 };
@@ -61,8 +74,6 @@ export const upgradeSubscription = async (userId: string, planId: string): Promi
 export const cancelSubscription = async (userId: string): Promise<boolean> => {
   if (!userId) return false;
   
-  // In reality, this would set 'cancel_at_period_end' in Stripe
-  // Here we just downgrade immediately for demo purposes, or mark as canceled
   try {
     const userRef = doc(db, 'users', userId);
     await updateDoc(userRef, {
@@ -75,9 +86,6 @@ export const cancelSubscription = async (userId: string): Promise<boolean> => {
   }
 };
 
-/**
- * Checks if the user has access to premium features
- */
 export const checkPremiumStatus = (sub?: UserSubscription): boolean => {
   if (!sub) return false;
   

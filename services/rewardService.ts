@@ -73,15 +73,24 @@ export const redeemCoupon = async (userId: string, coupon: Coupon): Promise<{ su
 
 export const getRedemptionHistory = async (userId: string): Promise<Redemption[]> => {
   const redemptionsRef = collection(db, 'redemptions');
+  
+  // NOTE: Removed orderBy("timestamp", "desc") to avoid "Requires Index" error.
+  // We will sort on the client side instead.
   const q = query(
     redemptionsRef, 
-    where("userId", "==", userId), 
-    orderBy("timestamp", "desc")
+    where("userId", "==", userId)
   );
   
   const snapshot = await getDocs(q);
-  return snapshot.docs.map(doc => ({
+  const results = snapshot.docs.map(doc => ({
     id: doc.id,
     ...doc.data()
   })) as Redemption[];
+
+  // Client-side sort
+  return results.sort((a, b) => {
+    const timeA = a.timestamp?.seconds ?? 0;
+    const timeB = b.timestamp?.seconds ?? 0;
+    return timeB - timeA;
+  });
 };

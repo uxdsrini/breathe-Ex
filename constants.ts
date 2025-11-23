@@ -1,6 +1,19 @@
 
 import { Preset, PhaseType, Coupon } from './types';
 
+export const WARMUP_PRESET: Preset = {
+  id: 'warmup-1min',
+  name: 'Warmup',
+  description: 'A 1-minute gentle breathing sequence to prepare your mind.',
+  type: 'breathing',
+  phases: [
+    { label: 'Inhale', duration: 4, type: PhaseType.Inhale },
+    { label: 'Exhale', duration: 6, type: PhaseType.Exhale },
+  ],
+  benefits: ["Prepares the nervous system.", "Clears mental static.", "Establishes rhythm."],
+  technique: ["Breathe gently.", "Focus on the transition."]
+};
+
 export const PRESETS: Preset[] = [
   {
     id: 'box-breathing',
